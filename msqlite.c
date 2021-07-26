@@ -406,7 +406,6 @@ Table* db_open(const char* filename){
     return table;
 }
 
-
 void indent(uint32_t level) {
   for (uint32_t i = 0; i < level; i++) {
     printf("  ");
@@ -468,6 +467,60 @@ void create_new_root(Table* table, uint32_t right_child_page_num) {
     *internal_node_right_child(root) = right_child_page_num;
 }
 
+Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
+    void* node = get_page(table -> pager,page_num);
+    uint32_t num_cells = *leaf_node_num_cells(node);
+
+    Cursor* cursor = malloc(sizeof(Cursor));
+    cursor->table = table;
+    cursor->page_num = page_num;
+
+    // Binary search
+    uint32_t min_index = 0;
+    uint32_t one_past_max_index = num_cells;
+    while (one_past_max_index != min_index) {
+        uint32_t index = (min_index + one_past_max_index) / 2;
+        uint32_t key_at_index = *leaf_node_key(node, index);
+        if (key == key_at_index) {
+            cursor -> cell_num = index;
+            return cursor;
+        }
+        if (key < key_at_index){
+            one_past_max_index = index;
+        } else {
+            min_index = index + 1;
+        }
+    }
+    cursor->cell_num = min_index;
+    return cursor;
+}
+
+
+Cursor* internal_node_find(Table* table, uint32_t page_num, uint32_t key) {
+    void* node = get_page(table->pager, page_num);
+    uint32_t num_keys = *internal_node_num_keys(node);
+    /* Binary search to find index of child to search */
+    uint32_t min_index = 0;
+    uint32_t max_index = num_keys; /* there is one more child than key */
+    while (min_index != max_index) {
+        uint32_t index = (min_index + max_index) / 2;
+        uint32_t key_to_right = *internal_node_key(node, index);
+        if (key_to_right >= key) {
+            max_index = index;
+        } else {
+            min_index = index + 1;
+        }
+    }
+    uint32_t child_num = *internal_node_child(node, min_index);
+    void* child = get_page(table->pager, child_num);
+    switch (get_node_type(child)) {
+        case NODE_LEAF:
+            return leaf_node_find(table, child_num, key);
+        case NODE_INTERNAL:
+            return internal_node_find(table, child_num, key);
+    }
+}
+
 void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
     // create a new node and move half the cells over .
     // insert new value in the one of two nodes
@@ -504,7 +557,7 @@ void leaf_node_split_and_insert(Cursor* cursor, uint32_t key, Row* value) {
         return create_new_root(cursor->table, new_page_num);
     } else {
         printf("Need to implement updating parent after split\n");
-        exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);    
     }
 }
 
@@ -528,34 +581,6 @@ void leaf_node_insert(Cursor* cursor,uint32_t key,Row* value){
     serialize_row(value, leaf_node_value(node, cursor->cell_num));
 }
 
-Cursor* leaf_node_find(Table* table, uint32_t page_num, uint32_t key) {
-    void* node = get_page(table -> pager,page_num);
-    uint32_t num_cells = *leaf_node_num_cells(node);
-
-    Cursor* cursor = malloc(sizeof(Cursor));
-    cursor->table = table;
-    cursor->page_num = page_num;
-
-    // Binary search
-    uint32_t min_index = 0;
-    uint32_t one_past_max_index = num_cells;
-    while (one_past_max_index != min_index) {
-        uint32_t index = (min_index + one_past_max_index) / 2;
-        uint32_t key_at_index = *leaf_node_key(node, index);
-        if (key == key_at_index) {
-            cursor -> cell_num = index;
-            return cursor;
-        }
-        if (key < key_at_index){
-            one_past_max_index = index;
-        } else {
-            min_index = index + 1;
-        }
-    }
-    cursor->cell_num = min_index;
-    return cursor;
-}
-
 // return the position of the given key
 Cursor* table_find(Table* table, uint32_t key){
     uint32_t root_page_num = table->root_page_num;
@@ -563,8 +588,7 @@ Cursor* table_find(Table* table, uint32_t key){
     if (get_node_type(root_node) == NODE_LEAF) {
         return leaf_node_find(table, root_page_num, key);
     } else {
-        printf("Need to implement searching an internal node\n");
-        exit(EXIT_FAILURE);
+        return internal_node_find(table, root_page_num, key);
     }
 }
 
@@ -644,7 +668,6 @@ MetaCommandResult do_mata_command(InputBuffer* input_buffer,Table *table){
         return META_COMMAND_UNRECOGNIZED_COMMAND;
     }
 }
-
 
 int main(int argc, char* argv[]) {
     if (argc < 2) {
